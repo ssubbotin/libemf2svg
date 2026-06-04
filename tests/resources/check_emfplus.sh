@@ -147,6 +147,30 @@ if [ -f "$F" ]; then
         ok "linear-gradient output DTD-valid" || ko "linear-gradient output NOT DTD-valid"
 fi
 
+# DrawPath: a Path stroked with a Pen -> SVG path with stroke + fill:none.
+F=./emf-ea/EA-emfplus-drawpath.emf
+if [ -f "$F" ]; then
+    $VALGRIND "$CONV" -p -i "$F" -o "$OUTDIR/drawpath.svg" || ko "conv -p failed on $F"
+    if grep -q 'stroke="#69738c"' "$OUTDIR/drawpath.svg" &&
+        grep -q 'fill="none"' "$OUTDIR/drawpath.svg"; then
+        ok "DrawPath stroked with pen color + fill:none on $F"
+    else
+        ko "DrawPath not stroked on $F"
+    fi
+    xmllint --dtdvalid "$DTD" --noout "$OUTDIR/drawpath.svg" 2>/dev/null &&
+        ok "drawpath output DTD-valid" || ko "drawpath output NOT DTD-valid"
+fi
+
+# A truncated Pen declaring dashed-line-data must not over-read.
+F=./emf-corrupted/emfplus-pen-truncated-dldata.emf
+if [ -f "$F" ]; then
+    if $VALGRIND "$CONV" -p -i "$F" -o "$OUTDIR/trunc-pen.svg" 2>/dev/null; then
+        ok "truncated dashed Pen is memory-safe under -p"
+    else
+        ko "truncated dashed Pen crashes/over-reads under -p (exit $?)"
+    fi
+fi
+
 # A non-finite gradient RectF must not leak nan/inf into the SVG.
 F=./emf-corrupted/emfplus-gradient-nan-rect.emf
 if [ -f "$F" ]; then

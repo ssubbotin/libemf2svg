@@ -1072,7 +1072,7 @@ int U_PMF_PATH_print(const char *contents, const char *blimit, FILE *out,
   */
 int U_PMF_PEN_print(const char *contents, const char *blimit, FILE *out,
                     drawingStates *states) {
-    FLAG_IGNORED;
+    FLAG_PARTIAL;
     uint32_t Version, Type;
     const char *PenData;
     const char *Brush;
@@ -1933,7 +1933,7 @@ int U_PMF_PATHPOINTTYPERLE_print(const char *contents, const char *blimit,
   */
 int U_PMF_PENDATA_print(const char *contents, const char *blimit, FILE *out,
                         drawingStates *states) {
-    FLAG_IGNORED;
+    FLAG_PARTIAL;
     uint32_t Flags, Unit;
     U_FLOAT Width;
     const char *Data;
@@ -3097,7 +3097,7 @@ int U_PMR_DRAWLINES_print(const char *contents, FILE *out,
   */
 int U_PMR_DRAWPATH_print(const char *contents, FILE *out,
                          drawingStates *states) {
-    FLAG_IGNORED;
+    FLAG_PARTIAL;
     uint32_t PathIdx, PenIdx;
     int status = U_PMR_DRAWPATH_get(contents, NULL, &PathIdx, &PenIdx);
     if (status) {

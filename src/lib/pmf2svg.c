@@ -162,6 +162,71 @@ static int pmf_resolve_fill(drawingStates *states, int btype, uint32_t BrushID,
 }
 
 /*
+   this function is not visible in the API.  Resolve the stroke for an EMF+
+   Draw* record from a Pen in the EMF+ object table into the caller buffer
+   `buf` (>= 64 bytes): stroke color (from the pen's embedded SolidColor
+   brush, defaulting to black), optional stroke-opacity, and stroke-width
+   (pen width in EMF+ world units scaled to device).  Returns 1 on success.
+   */
+static int pmf_resolve_stroke(drawingStates *states, uint32_t PenID,
+                              char *buf) {
+    uint32_t Version, Type, Flags = 0, Unit = 0, bVersion, bType, penFlags;
+    U_FLOAT Width = 1.0;
+    const char *PenData, *Brush, *bData, *optData, *blimit;
+    const unsigned char *fp;
+    pmfGraphObject *pen;
+    uint8_t b = 0, g = 0, r = 0, a = 0xFF; /* default opaque black */
+    double sw, mag = 1.0;
+    int n;
+
+    if (PenID > 63)
+        return (0);
+    pen = &(states->pmfObjectTable[PenID]);
+    /* require Version(4)+Type(4)+PenData Flags(4) so the PenData Flags read
+       below stays inside the exact-sized object copy */
+    if ((pen->type != U_OT_Pen) || (pen->data == NULL) || (pen->size < 12))
+        return (0);
+    blimit = pen->data + pen->size;
+    /* PenData begins after Version(4)+Type(4); read its Flags directly (LE,
+       in bounds since size >= 12) */
+    PenData = pen->data + 8;
+    fp = (const unsigned char *)PenData;
+    penFlags = (uint32_t)fp[0] | ((uint32_t)fp[1] << 8) |
+               ((uint32_t)fp[2] << 16) | ((uint32_t)fp[3] << 24);
+    /* width (U_PMF_PENDATA_get bounds-checks Flags/Unit/Width) */
+    (void)U_PMF_PENDATA_get(PenData, &Flags, &Unit, &Width, &optData, blimit);
+    /* The embedded brush sits after the optional pen data, whose length the
+       vendored U_PMF_PEN_get / U_PMF_LEN_PENDATA walk WITHOUT bounds-checking
+       the variable-length fields (dashed/compound line data, custom caps);
+       a truncated pen declaring one would over-read the object copy. Resolve
+       the brush color only when none of those flags are set; otherwise keep
+       the default black (these pens still get the correct width). */
+    if (!(penFlags & (U_PD_DLData | U_PD_CLData | U_PD_CustomStartCap |
+                      U_PD_CustomEndCap)) &&
+        U_PMF_PEN_get(pen->data, &Version, &Type, &PenData, &Brush, blimit) &&
+        (Brush >= pen->data) && (Brush + 8 <= blimit) &&
+        U_PMF_BRUSH_get(Brush, &bVersion, &bType, &bData, blimit) &&
+        (bType == U_BT_SolidColor)) {
+        (void)U_PMF_ARGB_get(bData, &b, &g, &r, &a, blimit);
+    }
+    /* a world-unit pen width magnifies with the world transform, exactly like
+       the geometry (pmf_point_cal); device-unit widths do not */
+    if (states->pmfTransformSet && (Unit == U_UT_World)) {
+        double det =
+            states->pmfM11 * states->pmfM22 - states->pmfM12 * states->pmfM21;
+        mag = sqrt(fabs(det));
+    }
+    sw = (Width > 0.0 ? (double)Width : 1.0) * mag * states->scaling;
+    if (!isfinite(sw) || sw < 0.0)
+        sw = states->scaling;
+    n = sprintf(buf, "stroke=\"#%02x%02x%02x\"", r, g, b);
+    if (a != 0xFF)
+        n += sprintf(buf + n, " stroke-opacity=\"%.4f\"", a / 255.0);
+    sprintf(buf + n, " stroke-width=\"%.4f\"", sw);
+    return (1);
+}
+
+/*
    this function is not visible in the API.  Validate that the full declared
    extent of the current EMF+ record lies inside the EMF buffer, BEFORE any
    U_PMR_*_get parses record data (those getters trust the declared size).
@@ -1778,6 +1843,34 @@ int U_PMR_DRAWLINES_draw(const char *contents, FILE *out,
 int U_PMR_DRAWPATH_draw(const char *contents, FILE *out,
                         drawingStates *states) {
     int status = 1;
+    int winding = 0;
+    uint32_t PathID, PenID;
+    U_PMF_CMN_HDR hdr;
+    pmfGraphObject *po;
+    char *d;
+    char stroke[128];
+    /* a GDI path may be open (BEGINPATH..ENDPATH streams an unterminated
+       "<path d=\"" attribute); emitting our own element now would corrupt it */
+    if (states->inPath)
+        return (status);
+    if (pmf_record_unsafe(states, contents, &hdr))
+        return (status);
+    if (!U_PMR_DRAWPATH_get(contents, NULL, &PathID, &PenID))
+        return (status);
+    if (PathID > 63)
+        return (status);
+    po = &(states->pmfObjectTable[PathID]);
+    if ((po->type != U_OT_Path) || (po->data == NULL))
+        return (status);
+    d = pmf_path_build(states, po->data, po->size, &winding);
+    if (d == NULL)
+        return (status);
+    if (pmf_resolve_stroke(states, PenID, stroke)) {
+        fprintf(out,
+                "<!-- EMF+ DrawPath --><%spath d=\"%s\" fill=\"none\" %s />\n",
+                states->nameSpaceString, d, stroke);
+    }
+    free(d);
     return (status);
 }
 

@@ -26,8 +26,10 @@ EMR_LINETO, EMR_BEGINPATH, EMR_ENDPATH, EMR_STROKEPATH, EMR_COMMENT = 54, 59, 60
 EMFPLUS_IDENT = 0x2B464D45  # "EMF+"
 PMR_FILLRECTS = 0x400A      # U_PMR_FILLRECTS | U_PMR_RECFLAG
 PMR_OBJECT = 0x4008         # U_PMR_OBJECT | U_PMR_RECFLAG
+PMR_DRAWPATH = 0x4015       # U_PMR_DRAWPATH | U_PMR_RECFLAG
 PPF_B, PPF_C = 0x8000, 0x4000  # inline ARGB brush, int16 coordinates
-OT_BRUSH = 0x01             # U_OT_Brush
+PPT_START, PPT_LINE = 0x00, 0x01
+OT_BRUSH, OT_PEN, OT_PATH = 0x01, 0x02, 0x03
 BT_SOLID, BT_LINEARGRADIENT = 0x00, 0x04
 GVER = 0xDBC02000           # an EmfPlusGraphicsVersion value (unused by renderer)
 
@@ -74,11 +76,38 @@ def fillrects_brush(brush_id, nrects=1):
     return struct.pack("<HHII", PMR_FILLRECTS, PPF_C, 12 + len(data), len(data)) + data
 
 
+def obj_record(obj_id, otype, obj_data):
+    """EMF+ Object record holding a (non-continued) object of any type."""
+    flags = (obj_id & 0xFF) | ((otype & 0x3F) << 8)
+    return struct.pack("<HHII", PMR_OBJECT, flags, 12 + len(obj_data),
+                       len(obj_data)) + obj_data
+
+
 def obj_brush(obj_id, brush_data):
-    """EMF+ Object record holding a (non-continued) brush object."""
-    flags = (obj_id & 0xFF) | ((OT_BRUSH & 0x3F) << 8)
-    return struct.pack("<HHII", PMR_OBJECT, flags, 12 + len(brush_data),
-                       len(brush_data)) + brush_data
+    return obj_record(obj_id, OT_BRUSH, brush_data)
+
+
+def pen_solid(bgra, width=1.0):
+    """A Pen object embedding a SolidColor brush (no optional pen data)."""
+    pendata = struct.pack("<IIf", 0, 0, width)            # Flags=0, Unit=0, Width
+    brush = brush_solid(bgra)
+    return struct.pack("<II", GVER, 0) + pendata + brush  # Version, Type=0
+
+
+def path_line(p0, p1):
+    """A Path object: two int16 points (Start, Line)."""
+    d = struct.pack("<IIHH", GVER, 2, PPF_C, 0)           # Version, Count, Flags, reserved
+    d += struct.pack("<hh", *p0) + struct.pack("<hh", *p1)
+    d += struct.pack("<BB", PPT_START, PPT_LINE)
+    return d
+
+
+def drawpath(path_id, pen_id):
+    """DrawPath record: PathID in flags, PenID in data."""
+    data = struct.pack("<I", pen_id)
+    flags = path_id & 0xFF
+    return struct.pack("<HHII", PMR_DRAWPATH, flags, 12 + len(data),
+                       len(data)) + data
 
 
 def brush_solid(bgra):
@@ -147,6 +176,30 @@ def main():
           assemble([
               emfplus_comment(obj_brush(2, brush_solid((0x84, 0x84, 0x9A, 0xFF))) +
                               fillrects_brush(2)),
+              eof(),
+          ]))
+
+    # Phase 2 (strokes): a truncated Pen that declares dashed-line-data but
+    # contains none must not over-read (the vendored U_PMF_LEN_PENDATA walk is
+    # unbounded). 12-byte pen data: Version + Type + PenData Flags=U_PD_DLData.
+    U_PD_DLDATA = 0x0100
+    write(os.path.join(root, "emf-corrupted", "emfplus-pen-truncated-dldata.emf"),
+          assemble([
+              emfplus_comment(
+                  obj_record(0, OT_PEN, struct.pack("<III", GVER, 0, U_PD_DLDATA)) +
+                  obj_record(1, OT_PATH, path_line((10, 10), (100, 100))) +
+                  drawpath(1, 0)),
+              eof(),
+          ]))
+
+    # Phase 2 (strokes): a Pen + Path + DrawPath -> stroked SVG path outline.
+    # Pen #0 = #69738c solid, width 1; Path #1 = line (10,10)-(100,100).
+    write(os.path.join(root, "emf-ea", "EA-emfplus-drawpath.emf"),
+          assemble([
+              emfplus_comment(
+                  obj_record(0, OT_PEN, pen_solid((0x8C, 0x73, 0x69, 0xFF))) +
+                  obj_record(1, OT_PATH, path_line((10, 10), (100, 100))) +
+                  drawpath(1, 0)),
               eof(),
           ]))
 
