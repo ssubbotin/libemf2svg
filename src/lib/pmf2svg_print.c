@@ -3073,7 +3073,7 @@ int U_PMR_DRAWIMAGEPOINTS_print(const char *contents, FILE *out,
   */
 int U_PMR_DRAWLINES_print(const char *contents, FILE *out,
                           drawingStates *states) {
-    FLAG_IGNORED;
+    FLAG_PARTIAL;
     uint32_t PenIdx;
     int ctype, dtype, RelAbs;
     uint32_t Elements;
@@ -3139,7 +3139,7 @@ int U_PMR_DRAWPIE_print(const char *contents, FILE *out,
   */
 int U_PMR_DRAWRECTS_print(const char *contents, FILE *out,
                           drawingStates *states) {
-    FLAG_IGNORED;
+    FLAG_PARTIAL;
     uint32_t PenID;
     int ctype;
     uint32_t Elements;

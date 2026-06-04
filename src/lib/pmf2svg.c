@@ -1831,6 +1831,52 @@ int U_PMR_DRAWIMAGEPOINTS_draw(const char *contents, FILE *out,
 int U_PMR_DRAWLINES_draw(const char *contents, FILE *out,
                          drawingStates *states) {
     int status = 1;
+    int ctype, dtype, RelAbs, ok;
+    uint32_t i, PenID, Elements, count, maxpts, psize;
+    U_PMF_POINTF *Points = NULL;
+    U_PMF_CMN_HDR hdr;
+    char stroke[128];
+    if (states->inPath)
+        return (status);
+    if (pmf_record_unsafe(states, contents, &hdr))
+        return (status);
+    if (!U_PMR_DRAWLINES_get(contents, &hdr, &PenID, &ctype, &dtype, &RelAbs,
+                             &Elements, &Points))
+        return (status);
+    /* relative points are variable-length; not handled yet */
+    if (RelAbs) {
+        free(Points);
+        return (status);
+    }
+    /* U_PMF_VARPOINTS_get NULLs *Points on failure, so a non-NULL pointer is a
+       valid owned buffer. Bound the count by what fits the record so a bogus
+       Elements cannot emit garbage points past the real data (points start at
+       header 12 + Elements 4 = 16). */
+    if ((Points != NULL) && pmf_resolve_stroke(states, PenID, stroke)) {
+        psize = ctype ? sizeof(U_PMF_POINT) : sizeof(U_PMF_POINTF);
+        maxpts = (hdr.Size > 16) ? (uint32_t)((hdr.Size - 16) / psize) : 0;
+        count = (Elements < maxpts) ? Elements : maxpts;
+        /* a single non-finite point would emit "nan" and break the path, so
+           require the whole polyline to be finite before emitting anything */
+        ok = (count >= 2);
+        for (i = 0; ok && i < count; i++) {
+            POINT_D p = pmf_point_cal(states, Points[i].X, Points[i].Y);
+            if (!isfinite(p.x) || !isfinite(p.y))
+                ok = 0;
+        }
+        if (ok) {
+            fprintf(out, "<!-- EMF+ DrawLines --><%spath d=\"",
+                    states->nameSpaceString);
+            for (i = 0; i < count; i++) {
+                POINT_D p = pmf_point_cal(states, Points[i].X, Points[i].Y);
+                fprintf(out, "%c %.4f,%.4f ", i ? 'L' : 'M', p.x, p.y);
+            }
+            if (dtype)
+                fprintf(out, "Z");
+            fprintf(out, "\" fill=\"none\" %s />\n", stroke);
+        }
+    }
+    free(Points);
     return (status);
 }
 
@@ -1895,6 +1941,46 @@ int U_PMR_DRAWPIE_draw(const char *contents, FILE *out, drawingStates *states) {
 int U_PMR_DRAWRECTS_draw(const char *contents, const char *blimit, FILE *out,
                          drawingStates *states) {
     int status = 1;
+    int ctype;
+    uint32_t i, PenID, Elements;
+    uint64_t avail;
+    bool getterFreed;
+    U_PMF_RECTF *Rects = NULL;
+    U_PMF_CMN_HDR hdr;
+    char stroke[128];
+    UNUSED(blimit);
+    if (states->inPath)
+        return (status);
+    if (pmf_record_unsafe(states, contents, &hdr))
+        return (status);
+    if (!U_PMR_DRAWRECTS_get(contents, &hdr, &PenID, &ctype, &Elements, &Rects))
+        return (status);
+    /* same dangling-Rects hazard as FillRects (U_PMF_VARRECTS_get frees but
+       does not NULL on overflow); rects start after header 12 + Elements 4 */
+    avail = (hdr.Size > 16) ? (hdr.Size - 16) : 0;
+    getterFreed = ((uint64_t)Elements * sizeof(U_PMF_RECT)) > avail;
+    if (!getterFreed && Rects != NULL &&
+        pmf_resolve_stroke(states, PenID, stroke)) {
+        for (i = 0; i < Elements; i++) {
+            U_PMF_RECTF *r = Rects + i;
+            if (!isfinite(r->X) || !isfinite(r->Y) || !(r->Width >= 0.0) ||
+                !(r->Height >= 0.0))
+                continue;
+            POINT_D ul = pmf_point_cal(states, r->X, r->Y);
+            POINT_D ur = pmf_point_cal(states, r->X + r->Width, r->Y);
+            POINT_D lr =
+                pmf_point_cal(states, r->X + r->Width, r->Y + r->Height);
+            POINT_D ll = pmf_point_cal(states, r->X, r->Y + r->Height);
+            fprintf(out, "<!-- EMF+ DrawRects --><%spath d=\"",
+                    states->nameSpaceString);
+            fprintf(out,
+                    "M %.4f,%.4f L %.4f,%.4f L %.4f,%.4f L %.4f,%.4f Z\" "
+                    "fill=\"none\" %s />\n",
+                    ul.x, ul.y, ur.x, ur.y, lr.x, lr.y, ll.x, ll.y, stroke);
+        }
+    }
+    if (!getterFreed)
+        free(Rects);
     return (status);
 }
 

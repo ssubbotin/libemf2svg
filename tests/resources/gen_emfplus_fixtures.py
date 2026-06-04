@@ -27,7 +27,9 @@ EMFPLUS_IDENT = 0x2B464D45  # "EMF+"
 PMR_FILLRECTS = 0x400A      # U_PMR_FILLRECTS | U_PMR_RECFLAG
 PMR_OBJECT = 0x4008         # U_PMR_OBJECT | U_PMR_RECFLAG
 PMR_DRAWPATH = 0x4015       # U_PMR_DRAWPATH | U_PMR_RECFLAG
-PPF_B, PPF_C = 0x8000, 0x4000  # inline ARGB brush, int16 coordinates
+PMR_DRAWRECTS = 0x400B      # U_PMR_DRAWRECTS | U_PMR_RECFLAG
+PMR_DRAWLINES = 0x400D      # U_PMR_DRAWLINES | U_PMR_RECFLAG
+PPF_B, PPF_C, PPF_D = 0x8000, 0x4000, 0x0400  # inline ARGB, int16 coords, closed
 PPT_START, PPT_LINE = 0x00, 0x01
 OT_BRUSH, OT_PEN, OT_PATH = 0x01, 0x02, 0x03
 BT_SOLID, BT_LINEARGRADIENT = 0x00, 0x04
@@ -110,6 +112,26 @@ def drawpath(path_id, pen_id):
                        len(data)) + data
 
 
+def drawrects(pen_id, rects):
+    """DrawRects record: PenID in flags, int16 rects (x,y,w,h)."""
+    data = struct.pack("<I", len(rects))
+    for rc in rects:
+        data += struct.pack("<hhhh", *rc)
+    flags = (pen_id & 0xFF) | PPF_C
+    return struct.pack("<HHII", PMR_DRAWRECTS, flags, 12 + len(data),
+                       len(data)) + data
+
+
+def drawlines(pen_id, points, closed=False):
+    """DrawLines record: PenID in flags, absolute float points."""
+    data = struct.pack("<I", len(points))
+    for p in points:
+        data += struct.pack("<ff", *p)
+    flags = (pen_id & 0xFF) | (PPF_D if closed else 0)
+    return struct.pack("<HHII", PMR_DRAWLINES, flags, 12 + len(data),
+                       len(data)) + data
+
+
 def brush_solid(bgra):
     return struct.pack("<II", GVER, BT_SOLID) + bytes(bgra)
 
@@ -176,6 +198,35 @@ def main():
           assemble([
               emfplus_comment(obj_brush(2, brush_solid((0x84, 0x84, 0x9A, 0xFF))) +
                               fillrects_brush(2)),
+              eof(),
+          ]))
+
+    # Phase 2 (strokes): DrawRects -> stroked rectangle outline.
+    write(os.path.join(root, "emf-ea", "EA-emfplus-drawrects.emf"),
+          assemble([
+              emfplus_comment(
+                  obj_record(0, OT_PEN, pen_solid((0x8C, 0x73, 0x69, 0xFF))) +
+                  drawrects(0, [(20, 20, 60, 40)])),
+              eof(),
+          ]))
+
+    # Phase 2 (strokes): DrawLines -> stroked polyline.
+    write(os.path.join(root, "emf-ea", "EA-emfplus-drawlines.emf"),
+          assemble([
+              emfplus_comment(
+                  obj_record(0, OT_PEN, pen_solid((0x8C, 0x73, 0x69, 0xFF))) +
+                  drawlines(0, [(10, 10), (100, 50), (50, 100)])),
+              eof(),
+          ]))
+
+    # Phase 2 (strokes): a DrawLines polyline containing a non-finite point
+    # must be suppressed entirely (no "nan"/"inf" in the SVG).
+    nan_pt = float("nan")
+    write(os.path.join(root, "emf-corrupted", "emfplus-drawlines-nan-point.emf"),
+          assemble([
+              emfplus_comment(
+                  obj_record(0, OT_PEN, pen_solid((0x8C, 0x73, 0x69, 0xFF))) +
+                  drawlines(0, [(10, 10), (nan_pt, 50), (50, 100)])),
               eof(),
           ]))
 

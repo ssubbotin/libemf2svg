@@ -161,6 +161,47 @@ if [ -f "$F" ]; then
         ok "drawpath output DTD-valid" || ko "drawpath output NOT DTD-valid"
 fi
 
+# DrawRects: a rectangle stroked with a Pen -> stroked path, fill:none.
+F=./emf-ea/EA-emfplus-drawrects.emf
+if [ -f "$F" ]; then
+    $VALGRIND "$CONV" -p -i "$F" -o "$OUTDIR/drawrects.svg" || ko "conv -p failed on $F"
+    if grep -q 'EMF+ DrawRects' "$OUTDIR/drawrects.svg" &&
+        grep -q 'stroke="#69738c"' "$OUTDIR/drawrects.svg" &&
+        grep -q 'fill="none"' "$OUTDIR/drawrects.svg"; then
+        ok "DrawRects stroked with pen + fill:none on $F"
+    else
+        ko "DrawRects not stroked on $F"
+    fi
+    xmllint --dtdvalid "$DTD" --noout "$OUTDIR/drawrects.svg" 2>/dev/null &&
+        ok "drawrects output DTD-valid" || ko "drawrects output NOT DTD-valid"
+fi
+
+# DrawLines: a polyline stroked with a Pen -> stroked path, fill:none.
+F=./emf-ea/EA-emfplus-drawlines.emf
+if [ -f "$F" ]; then
+    $VALGRIND "$CONV" -p -i "$F" -o "$OUTDIR/drawlines.svg" || ko "conv -p failed on $F"
+    if grep -q 'EMF+ DrawLines' "$OUTDIR/drawlines.svg" &&
+        grep -q 'stroke="#69738c"' "$OUTDIR/drawlines.svg" &&
+        grep -q 'L 100.0000,50.0000' "$OUTDIR/drawlines.svg"; then
+        ok "DrawLines emitted as stroked polyline on $F"
+    else
+        ko "DrawLines not stroked on $F"
+    fi
+    xmllint --dtdvalid "$DTD" --noout "$OUTDIR/drawlines.svg" 2>/dev/null &&
+        ok "drawlines output DTD-valid" || ko "drawlines output NOT DTD-valid"
+fi
+
+# A DrawLines polyline with a non-finite point must be fully suppressed.
+F=./emf-corrupted/emfplus-drawlines-nan-point.emf
+if [ -f "$F" ]; then
+    $VALGRIND "$CONV" -p -i "$F" -o "$OUTDIR/dl-nan.svg" || ko "conv -p failed on $F"
+    if grep -qiE 'nan|inf' "$OUTDIR/dl-nan.svg"; then
+        ko "non-finite DrawLines point leaked nan/inf into the SVG"
+    else
+        ok "non-finite DrawLines point suppressed (no nan/inf)"
+    fi
+fi
+
 # A truncated Pen declaring dashed-line-data must not over-read.
 F=./emf-corrupted/emfplus-pen-truncated-dldata.emf
 if [ -f "$F" ]; then
