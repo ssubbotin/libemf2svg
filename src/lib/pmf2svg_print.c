@@ -847,7 +847,7 @@ int U_PMF_NODETYPE_print(int Type, FILE *out, drawingStates *states) {
   */
 int U_PMF_BRUSH_print(const char *contents, const char *blimit, FILE *out,
                       drawingStates *states) {
-    FLAG_IGNORED;
+    FLAG_PARTIAL;
     uint32_t Version, Type;
     const char *Data;
     int status = U_PMF_BRUSH_get(contents, &Version, &Type, &Data, blimit);

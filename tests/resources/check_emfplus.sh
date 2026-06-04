@@ -113,6 +113,51 @@ if [ -f "$F" ]; then
     fi
 fi
 
+# ---------------------------------------------------------------- object brushes
+# SolidColor object-table brush referenced by a btype=0 FillRects.
+F=./emf-ea/EA-emfplus-solid-brush.emf
+if [ -f "$F" ]; then
+    $VALGRIND "$CONV" -p -i "$F" -o "$OUTDIR/solid-brush.svg" || ko "conv -p failed on $F"
+    if grep -q 'fill="#9a8484"' "$OUTDIR/solid-brush.svg"; then
+        ok "SolidColor object brush resolved to fill on $F"
+    else
+        ko "SolidColor object brush not resolved on $F"
+    fi
+    xmllint --dtdvalid "$DTD" --noout "$OUTDIR/solid-brush.svg" 2>/dev/null &&
+        ok "solid-brush output DTD-valid" || ko "solid-brush output NOT DTD-valid"
+fi
+
+# LinearGradient object-table brush -> <linearGradient> def + url() reference.
+F=./emf-ea/EA-emfplus-linear-gradient.emf
+if [ -f "$F" ]; then
+    $VALGRIND "$CONV" -p -i "$F" -o "$OUTDIR/lin-grad.svg" || ko "conv -p failed on $F"
+    if grep -q '<linearGradient' "$OUTDIR/lin-grad.svg" &&
+        grep -q 'fill="url(#' "$OUTDIR/lin-grad.svg"; then
+        ok "LinearGradient brush emitted as linearGradient + url() on $F"
+    else
+        ko "LinearGradient brush not resolved on $F"
+    fi
+    if grep -q 'stop-color:#bfda88' "$OUTDIR/lin-grad.svg" &&
+        grep -q 'stop-color:#cce2a0' "$OUTDIR/lin-grad.svg"; then
+        ok "gradient start/end stop colors present on $F"
+    else
+        ko "gradient stop colors missing on $F"
+    fi
+    xmllint --dtdvalid "$DTD" --noout "$OUTDIR/lin-grad.svg" 2>/dev/null &&
+        ok "linear-gradient output DTD-valid" || ko "linear-gradient output NOT DTD-valid"
+fi
+
+# A non-finite gradient RectF must not leak nan/inf into the SVG.
+F=./emf-corrupted/emfplus-gradient-nan-rect.emf
+if [ -f "$F" ]; then
+    $VALGRIND "$CONV" -p -i "$F" -o "$OUTDIR/grad-nan.svg" || ko "conv -p failed on $F"
+    if grep -qiE 'nan|inf' "$OUTDIR/grad-nan.svg"; then
+        ko "non-finite gradient leaked nan/inf into the SVG"
+    else
+        ok "non-finite gradient RectF produces no nan/inf coordinates"
+    fi
+fi
+
 # ---------------------------------------------------------------- no -p: unchanged
 F=./emf-ea/EA-test-file-020.emf
 "$CONV" -i "$F" -o "$OUTDIR/020-again.svg"

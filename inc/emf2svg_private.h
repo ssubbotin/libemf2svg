@@ -326,6 +326,8 @@ typedef struct {
     double pmfM22;
     double pmfDx;
     double pmfDy;
+    // running id for generated EMF+ <linearGradient> defs (unique per file)
+    uint32_t pmfGradId;
     // EMF+ object table (object IDs are 0..63, see [MS-EMFPLUS] 3.1.2)
     pmfGraphObject pmfObjectTable[64];
     // general emf structure

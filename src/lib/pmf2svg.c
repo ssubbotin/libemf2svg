@@ -62,17 +62,103 @@ static POINT_D pmf_point_cal(drawingStates *states, double x, double y) {
 }
 
 /*
-   this function is not visible in the API.  Emit fill attributes from an
-   EMF+ inline U_PMF_ARGB color (0xAARRGGBB), translating the alpha channel
-   to fill-opacity.
+   this function is not visible in the API.  Build SVG fill attributes from an
+   EMF+ U_PMF_ARGB color (0xAARRGGBB), translating the alpha channel to
+   fill-opacity, into the caller buffer (>= 64 bytes).
    */
-static void pmf_fill_draw(uint32_t argb, FILE *out) {
+static void pmf_color_attr(uint32_t argb, char *buf) {
     uint8_t alpha = (argb >> 24) & 0xFF;
-    fprintf(out, " fill=\"#%02x%02x%02x\"", (argb >> 16) & 0xFF,
-            (argb >> 8) & 0xFF, argb & 0xFF);
     if (alpha != 0xFF) {
-        fprintf(out, " fill-opacity=\"%.4f\"", alpha / 255.0);
+        sprintf(buf, "fill=\"#%02x%02x%02x\" fill-opacity=\"%.4f\"",
+                (argb >> 16) & 0xFF, (argb >> 8) & 0xFF, argb & 0xFF,
+                alpha / 255.0);
+    } else {
+        sprintf(buf, "fill=\"#%02x%02x%02x\"", (argb >> 16) & 0xFF,
+                (argb >> 8) & 0xFF, argb & 0xFF);
     }
+}
+
+/*
+   this function is not visible in the API.  Emit one SVG gradient <stop> from
+   an EMF+ U_PMF_ARGB color.
+   */
+static void pmf_grad_stop(drawingStates *states, U_PMF_ARGB c, double offset,
+                          FILE *out) {
+    fprintf(out, "<%sstop offset=\"%.4f\" style=\"stop-color:#%02x%02x%02x",
+            states->nameSpaceString, offset, c.Red, c.Green, c.Blue);
+    if (c.Alpha != 0xFF)
+        fprintf(out, ";stop-opacity:%.4f", c.Alpha / 255.0);
+    fprintf(out, "\" />");
+}
+
+/*
+   this function is not visible in the API.  Resolve the fill for an EMF+
+   Fill* record into the caller buffer `buf` (>= 64 bytes), emitting any
+   required <defs> to `out` first.  When `btype` is set BrushID is itself an
+   inline U_PMF_ARGB; otherwise BrushID indexes the EMF+ object table.
+   Supported brushes: inline color, SolidColor object, LinearGradient object.
+   Returns 1 when a fill was produced, 0 when nothing should be drawn.
+   */
+static int pmf_resolve_fill(drawingStates *states, int btype, uint32_t BrushID,
+                            FILE *out, char *buf) {
+    uint32_t Version, Type;
+    const char *Data;
+    pmfGraphObject *brush;
+    const char *blimit;
+
+    if (btype) { /* BrushID is an inline ARGB color */
+        pmf_color_attr(BrushID, buf);
+        return (1);
+    }
+    if (BrushID > 63)
+        return (0);
+    brush = &(states->pmfObjectTable[BrushID]);
+    if ((brush->type != U_OT_Brush) || (brush->data == NULL))
+        return (0);
+    blimit = brush->data + brush->size;
+    if (!U_PMF_BRUSH_get(brush->data, &Version, &Type, &Data, blimit))
+        return (0);
+
+    if (Type == U_BT_SolidColor) {
+        uint8_t b, g, r, a;
+        if (!U_PMF_ARGB_get(Data, &b, &g, &r, &a, blimit))
+            return (0);
+        pmf_color_attr(((uint32_t)a << 24) | ((uint32_t)r << 16) |
+                           ((uint32_t)g << 8) | (uint32_t)b,
+                       buf);
+        return (1);
+    }
+    if (Type == U_BT_LinearGradient) {
+        U_PMF_LINEARGRADIENTBRUSHDATA Lgbd;
+        const char *Optdata;
+        uint32_t id;
+        POINT_D p1, p2;
+        if (!U_PMF_LINEARGRADIENTBRUSHDATA_get(Data, &Lgbd, &Optdata, blimit))
+            return (0);
+        p1 = pmf_point_cal(states, Lgbd.RectF.X, Lgbd.RectF.Y);
+        p2 = pmf_point_cal(states, Lgbd.RectF.X + Lgbd.RectF.Width,
+                           Lgbd.RectF.Y + Lgbd.RectF.Height);
+        /* a non-finite RectF would emit x1="nan" etc., which is invalid SVG
+           that DTD (CDATA attributes) does not catch; draw nothing instead */
+        if (!isfinite(p1.x) || !isfinite(p1.y) || !isfinite(p2.x) ||
+            !isfinite(p2.y))
+            return (0);
+        id = states->pmfGradId++;
+        fprintf(out,
+                "<%sdefs><%slinearGradient id=\"pmf-grad-%u\" "
+                "gradientUnits=\"userSpaceOnUse\" "
+                "x1=\"%.4f\" y1=\"%.4f\" x2=\"%.4f\" y2=\"%.4f\">",
+                states->nameSpaceString, states->nameSpaceString, id, p1.x,
+                p1.y, p2.x, p2.y);
+        pmf_grad_stop(states, Lgbd.StartColor, 0.0, out);
+        pmf_grad_stop(states, Lgbd.EndColor, 1.0, out);
+        fprintf(out, "</%slinearGradient></%sdefs>", states->nameSpaceString,
+                states->nameSpaceString);
+        sprintf(buf, "fill=\"url(#pmf-grad-%u)\"", id);
+        return (1);
+    }
+    /* Hatch / Texture / PathGradient not handled yet */
+    return (0);
 }
 
 /*
@@ -1770,6 +1856,7 @@ int U_PMR_FILLPATH_draw(const char *contents, FILE *out,
     U_PMF_CMN_HDR hdr;
     pmfGraphObject *po;
     char *d;
+    char fill[128];
     /* a GDI path may be open (BEGINPATH..ENDPATH streams an unterminated
        "<path d=\"" attribute); emitting our own element now would corrupt it */
     if (states->inPath)
@@ -1777,10 +1864,6 @@ int U_PMR_FILLPATH_draw(const char *contents, FILE *out,
     if (pmf_record_unsafe(states, contents, &hdr))
         return (status);
     if (!U_PMR_FILLPATH_get(contents, NULL, &PathID, &btype, &BrushID))
-        return (status);
-    /* only inline ARGB colors are handled for now,
-       brushes from the EMF+ object table are not */
-    if (!btype)
         return (status);
     if (PathID > 63)
         return (status);
@@ -1790,11 +1873,14 @@ int U_PMR_FILLPATH_draw(const char *contents, FILE *out,
     d = pmf_path_build(states, po->data, po->size, &winding);
     if (d == NULL)
         return (status);
-    /* GDI+ default fill rule is alternate (even-odd) */
-    fprintf(out, "<!-- EMF+ FillPath --><%spath d=\"%s\" fill-rule=\"%s\"",
-            states->nameSpaceString, d, winding ? "nonzero" : "evenodd");
-    pmf_fill_draw(BrushID, out);
-    fprintf(out, " />\n");
+    /* resolve fill (emits any <defs> first); skip the element if unresolved */
+    if (pmf_resolve_fill(states, btype, BrushID, out, fill)) {
+        /* GDI+ default fill rule is alternate (even-odd) */
+        fprintf(
+            out,
+            "<!-- EMF+ FillPath --><%spath d=\"%s\" fill-rule=\"%s\" %s />\n",
+            states->nameSpaceString, d, winding ? "nonzero" : "evenodd", fill);
+    }
     free(d);
     return (status);
 }
@@ -1838,6 +1924,7 @@ int U_PMR_FILLRECTS_draw(const char *contents, const char *blimit, FILE *out,
     bool getterFreed;
     U_PMF_RECTF *Rects = NULL;
     U_PMF_CMN_HDR hdr;
+    char fill[128];
     UNUSED(blimit);
     /* a GDI path may be open (BEGINPATH..ENDPATH streams an unterminated
        "<path d=\"" attribute); emitting our own element now would corrupt it */
@@ -1857,9 +1944,10 @@ int U_PMR_FILLRECTS_draw(const char *contents, const char *blimit, FILE *out,
        the buffer was freed we must neither read nor free it again. */
     avail = (hdr.Size > 20) ? (hdr.Size - 20) : 0;
     getterFreed = ((uint64_t)Elements * sizeof(U_PMF_RECT)) > avail;
-    /* only inline ARGB colors are handled for now,
-       brushes from the EMF+ object table are not */
-    if (btype && !getterFreed && Rects != NULL) {
+    /* resolve fill once (emits any <defs>); the same fill applies to every
+       rect in the record */
+    if (!getterFreed && Rects != NULL &&
+        pmf_resolve_fill(states, btype, BrushID, out, fill)) {
         for (i = 0; i < Elements; i++) {
             U_PMF_RECTF *r = Rects + i;
             if (!isfinite(r->X) || !isfinite(r->Y) || !(r->Width >= 0.0) ||
@@ -1872,10 +1960,10 @@ int U_PMR_FILLRECTS_draw(const char *contents, const char *blimit, FILE *out,
             POINT_D ll = pmf_point_cal(states, r->X, r->Y + r->Height);
             fprintf(out, "<!-- EMF+ FillRects --><%spath d=\"",
                     states->nameSpaceString);
-            fprintf(out, "M %.4f,%.4f L %.4f,%.4f L %.4f,%.4f L %.4f,%.4f Z\"",
-                    ul.x, ul.y, ur.x, ur.y, lr.x, lr.y, ll.x, ll.y);
-            pmf_fill_draw(BrushID, out);
-            fprintf(out, " />\n");
+            fprintf(
+                out,
+                "M %.4f,%.4f L %.4f,%.4f L %.4f,%.4f L %.4f,%.4f Z\" %s />\n",
+                ul.x, ul.y, ur.x, ur.y, lr.x, lr.y, ll.x, ll.y, fill);
         }
     }
     if (!getterFreed)

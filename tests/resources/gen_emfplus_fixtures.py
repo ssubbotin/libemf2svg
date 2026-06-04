@@ -25,7 +25,11 @@ EMR_HEADER, EMR_EOF, EMR_MOVETOEX = 1, 14, 27
 EMR_LINETO, EMR_BEGINPATH, EMR_ENDPATH, EMR_STROKEPATH, EMR_COMMENT = 54, 59, 60, 64, 70
 EMFPLUS_IDENT = 0x2B464D45  # "EMF+"
 PMR_FILLRECTS = 0x400A      # U_PMR_FILLRECTS | U_PMR_RECFLAG
+PMR_OBJECT = 0x4008         # U_PMR_OBJECT | U_PMR_RECFLAG
 PPF_B, PPF_C = 0x8000, 0x4000  # inline ARGB brush, int16 coordinates
+OT_BRUSH = 0x01             # U_OT_Brush
+BT_SOLID, BT_LINEARGRADIENT = 0x00, 0x04
+GVER = 0xDBC02000           # an EmfPlusGraphicsVersion value (unused by renderer)
 
 
 def rec(itype, body):
@@ -60,6 +64,35 @@ def fillrects(elements=1, size_override=None, nrects=1):
         data += struct.pack("<hhhh", 20, 20, 60, 40)
     size = size_override if size_override is not None else 12 + len(data)
     return struct.pack("<HHII", PMR_FILLRECTS, PPF_B | PPF_C, size, len(data)) + data
+
+
+def fillrects_brush(brush_id, nrects=1):
+    """FillRects referencing an object-table brush (btype=0, int16 rects)."""
+    data = struct.pack("<I", brush_id) + struct.pack("<I", nrects)
+    for _ in range(nrects):
+        data += struct.pack("<hhhh", 20, 20, 60, 40)
+    return struct.pack("<HHII", PMR_FILLRECTS, PPF_C, 12 + len(data), len(data)) + data
+
+
+def obj_brush(obj_id, brush_data):
+    """EMF+ Object record holding a (non-continued) brush object."""
+    flags = (obj_id & 0xFF) | ((OT_BRUSH & 0x3F) << 8)
+    return struct.pack("<HHII", PMR_OBJECT, flags, 12 + len(brush_data),
+                       len(brush_data)) + brush_data
+
+
+def brush_solid(bgra):
+    return struct.pack("<II", GVER, BT_SOLID) + bytes(bgra)
+
+
+def brush_lineargradient(rect, start_bgra, end_bgra):
+    d = struct.pack("<II", GVER, BT_LINEARGRADIENT)
+    d += struct.pack("<I", 0)              # BrushData Flags (U_BD_None)
+    d += struct.pack("<i", 0)              # WrapMode
+    d += struct.pack("<ffff", *rect)       # RectF: X, Y, Width, Height
+    d += bytes(start_bgra) + bytes(end_bgra)
+    d += struct.pack("<II", 0, 0)          # Reserved1, Reserved2
+    return d
 
 
 def emfplus_comment(pmf_bytes):
@@ -107,6 +140,41 @@ def main():
     # FIX C: declared Size overruns the buffer.
     write(os.path.join(root, "emf-corrupted", "emfplus-fillrects-truncated-size.emf"),
           assemble([emfplus_comment(fillrects(size_override=0xFFFF)), eof()]))
+
+    # Phase 2: a SolidColor object-table brush referenced by FillRects (btype=0).
+    # Brush #2 = opaque #9a8484 (BGRA bytes 0x84,0x84,0x9a,0xff).
+    write(os.path.join(root, "emf-ea", "EA-emfplus-solid-brush.emf"),
+          assemble([
+              emfplus_comment(obj_brush(2, brush_solid((0x84, 0x84, 0x9A, 0xFF))) +
+                              fillrects_brush(2)),
+              eof(),
+          ]))
+
+    # Phase 2: a LinearGradient brush with a non-finite RectF must not leak
+    # "nan"/"inf" into the SVG gradient coordinates (DTD validation, being
+    # CDATA, would not catch it).
+    nan = float("nan")
+    write(os.path.join(root, "emf-corrupted", "emfplus-gradient-nan-rect.emf"),
+          assemble([
+              emfplus_comment(
+                  obj_brush(3, brush_lineargradient(
+                      (nan, nan, nan, nan),
+                      (0x88, 0xDA, 0xBF, 0xFF), (0xA0, 0xE2, 0xCC, 0xFF))) +
+                  fillrects_brush(3)),
+              eof(),
+          ]))
+
+    # Phase 2: a LinearGradient object-table brush referenced by FillRects.
+    # Brush #3 = #bfda88 -> #cce2a0 over rect (20,20)-(80,60).
+    write(os.path.join(root, "emf-ea", "EA-emfplus-linear-gradient.emf"),
+          assemble([
+              emfplus_comment(
+                  obj_brush(3, brush_lineargradient(
+                      (20.0, 20.0, 60.0, 40.0),
+                      (0x88, 0xDA, 0xBF, 0xFF), (0xA0, 0xE2, 0xCC, 0xFF))) +
+                  fillrects_brush(3)),
+              eof(),
+          ]))
 
 
 if __name__ == "__main__":
