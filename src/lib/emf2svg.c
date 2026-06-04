@@ -644,7 +644,7 @@ int U_emf_onerec_draw(const char *contents, const char *blimit, int recnum,
     return (size);
 }
 
-int emf2svg(char *contents, size_t length, char ** fm_out, size_t * fm_out_length,
+int emf2svg(char *contents, size_t length, char **fm_out, size_t *fm_out_length,
             generatorOptions *options) {
     size_t off = 0;
     size_t result;
@@ -774,7 +774,8 @@ int emf2svg(char *contents, size_t length, char ** fm_out, size_t * fm_out_lengt
 
         pEmr = (PU_ENHMETARECORD)(contents + off);
 
-        result = U_emf_onerec_draw(contents, blimit, recnum, off, stream, states);
+        result =
+            U_emf_onerec_draw(contents, blimit, recnum, off, stream, states);
         if (result == (size_t)-1 || states->Error) {
             if (states->verbose) {
                 printf(
@@ -791,6 +792,7 @@ int emf2svg(char *contents, size_t length, char ** fm_out, size_t * fm_out_lengt
     } // end of while
     FLAG_RESET;
     freeObjectTable(states);
+    freePmfObjectTable(states);
     freePathStack(states->emfStructure.pathStack);
     free_path(&(states->currentPath));
     free(states->objectTable);
@@ -801,16 +803,15 @@ int emf2svg(char *contents, size_t length, char ** fm_out, size_t * fm_out_lengt
 
     if (stream) {
         fflush(stream);
-        void* out;
+        void *out;
         fmem_mem(&fm, &out, fm_out_length);
         if (*fm_out_length) {
-            *fm_out = (char*)malloc(*fm_out_length+1);
+            *fm_out = (char *)malloc(*fm_out_length + 1);
         }
         if (*fm_out) {
-            memcpy((void*)(*fm_out), out, *fm_out_length);
+            memcpy((void *)(*fm_out), out, *fm_out_length);
             (*fm_out)[*fm_out_length] = 0;
-        }
-        else {
+        } else {
             err = 0;
         }
         fclose(stream);
