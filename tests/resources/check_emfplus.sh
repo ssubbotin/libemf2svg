@@ -78,6 +78,23 @@ else
     ko "-p output is NOT DTD-valid on $F"
 fi
 
+# Regression for kakwa/libemf2svg#12 (LibreOffice tdf#107034 attachment 132406):
+# an EMF+ document that produced an empty SVG before EMF+ rendering existed.
+F=./emf-ea/emfplus-issue12-tdf107034.emf
+if [ -f "$F" ]; then
+    $VALGRIND "$CONV" -p -i "$F" -o "$OUTDIR/issue12-p.svg" || ko "conv -p failed on $F"
+    "$CONV" -i "$F" -o "$OUTDIR/issue12-nop.svg"
+    np=$(grep -oc '<path' "$OUTDIR/issue12-nop.svg")
+    wp=$(grep -oc '<path' "$OUTDIR/issue12-p.svg")
+    if [ "$wp" -gt 100 ] && grep -q 'EMF+ ' "$OUTDIR/issue12-p.svg"; then
+        ok "issue#12 EMF+ document now renders content under -p ($wp paths, was $np)"
+    else
+        ko "issue#12 EMF+ document still renders empty under -p ($wp paths)"
+    fi
+    xmllint --noout "$OUTDIR/issue12-p.svg" 2>/dev/null &&
+        ok "issue#12 -p output well-formed" || ko "issue#12 -p output malformed"
+fi
+
 # ---------------------------------------------------------------- crafted fixtures
 # (regenerate with: python3 tests/resources/gen_emfplus_fixtures.py)
 
