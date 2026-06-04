@@ -328,6 +328,15 @@ typedef struct {
     double pmfDy;
     // running id for generated EMF+ <linearGradient> defs (unique per file)
     uint32_t pmfGradId;
+    // EMF+/GDI dual-mode arbitration (see [MS-EMFPLUS] 3.1.4.2):
+    // emfPlusDrew is set true only once an EMF+ record has actually emitted SVG
+    // (not merely been seen). gdiPlay is true inside a GetDC window (GDI drawn
+    // there is intended output, not fallback). gdiMute = emfPlusDrew &&
+    // !gdiPlay tells U_EMRBITBLT_draw to drop the source-less brush-fill that
+    // EA bakes its drop shadows with (a duplicate of the EMF+ rendering).
+    bool emfPlusDrew;
+    bool gdiPlay;
+    bool gdiMute;
     // EMF+ object table (object IDs are 0..63, see [MS-EMFPLUS] 3.1.2)
     pmfGraphObject pmfObjectTable[64];
     // general emf structure

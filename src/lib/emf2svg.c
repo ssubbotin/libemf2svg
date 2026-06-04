@@ -286,6 +286,18 @@ int U_emf_onerec_draw(const char *contents, const char *blimit, int recnum,
         contents + size - 1 < contents)
         return (-1);
 
+    /* Dual-mode arbitration ([MS-EMFPLUS] 3.1.4.2): once the EMF+ layer has
+       actually drawn (emfPlusDrew) and we are not inside a GetDC window, the
+       source-less GDI brush-fill that EA bakes its drop shadows with is a
+       duplicate of the EMF+ rendering; U_EMRBITBLT_draw consults gdiMute and
+       suppresses exactly that case. Suppression is deliberately limited to
+       those shadow blits: general GDI vector drawing is NOT muted, because the
+       EMF+ layer does not always reproduce it (a dual file may carry its whole
+       picture in GDI with only a sparse EMF+ layer), and muting it would erase
+       primary content. With no rendered EMF+, gdiMute stays false and output
+       is byte-identical to a pure-GDI conversion. */
+    states->gdiMute = (states->emfPlusDrew && !states->gdiPlay);
+
     switch (lpEMFR->iType) {
     case U_EMR_HEADER:
         U_EMRHEADER_draw(contents, out, states);

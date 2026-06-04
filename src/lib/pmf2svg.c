@@ -437,6 +437,12 @@ int U_pmf_onerec_draw(const char *contents, const char *blimit, int recnum,
                                                  leaving the indexable part */
     if (type < U_PMR_MIN || type > U_PMR_MAX)
         return (-1); /* unknown EMF+ record type */
+    /* Dual-mode arbitration (see U_emf_onerec_draw): GetDC opens a window in
+       which the following GDI records are intended output; any other EMF+
+       record closes it. The GDI fallback is muted only once the EMF+ layer has
+       actually drawn something (states->emfPlusDrew, set by the draw handlers
+       below), never on mere record presence. */
+    states->gdiPlay = (type == U_PMR_GETDC);
     status =
         U_PMF_CMN_HDR_draw(Header, recnum, off, out, states); /* EMF+ part */
 
@@ -1865,6 +1871,7 @@ int U_PMR_DRAWLINES_draw(const char *contents, FILE *out,
                 ok = 0;
         }
         if (ok) {
+            states->emfPlusDrew = true;
             fprintf(out, "<!-- EMF+ DrawLines --><%spath d=\"",
                     states->nameSpaceString);
             for (i = 0; i < count; i++) {
@@ -1912,6 +1919,7 @@ int U_PMR_DRAWPATH_draw(const char *contents, FILE *out,
     if (d == NULL)
         return (status);
     if (pmf_resolve_stroke(states, PenID, stroke)) {
+        states->emfPlusDrew = true;
         fprintf(out,
                 "<!-- EMF+ DrawPath --><%spath d=\"%s\" fill=\"none\" %s />\n",
                 states->nameSpaceString, d, stroke);
@@ -1966,6 +1974,7 @@ int U_PMR_DRAWRECTS_draw(const char *contents, const char *blimit, FILE *out,
             if (!isfinite(r->X) || !isfinite(r->Y) || !(r->Width >= 0.0) ||
                 !(r->Height >= 0.0))
                 continue;
+            states->emfPlusDrew = true;
             POINT_D ul = pmf_point_cal(states, r->X, r->Y);
             POINT_D ur = pmf_point_cal(states, r->X + r->Width, r->Y);
             POINT_D lr =
@@ -2054,6 +2063,7 @@ int U_PMR_FILLPATH_draw(const char *contents, FILE *out,
         return (status);
     /* resolve fill (emits any <defs> first); skip the element if unresolved */
     if (pmf_resolve_fill(states, btype, BrushID, out, fill)) {
+        states->emfPlusDrew = true;
         /* GDI+ default fill rule is alternate (even-odd) */
         fprintf(
             out,
@@ -2117,6 +2127,7 @@ int U_PMR_FILLPOLYGON_draw(const char *contents, FILE *out,
                 ok = 0;
         }
         if (ok && pmf_resolve_fill(states, btype, BrushID, out, fill)) {
+            states->emfPlusDrew = true;
             fprintf(out, "<!-- EMF+ FillPolygon --><%spath d=\"",
                     states->nameSpaceString);
             for (i = 0; i < count; i++) {
@@ -2175,6 +2186,7 @@ int U_PMR_FILLRECTS_draw(const char *contents, const char *blimit, FILE *out,
             if (!isfinite(r->X) || !isfinite(r->Y) || !(r->Width >= 0.0) ||
                 !(r->Height >= 0.0))
                 continue;
+            states->emfPlusDrew = true;
             POINT_D ul = pmf_point_cal(states, r->X, r->Y);
             POINT_D ur = pmf_point_cal(states, r->X + r->Width, r->Y);
             POINT_D lr =

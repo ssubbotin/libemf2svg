@@ -249,6 +249,31 @@ if [ -f "$F" ]; then
     fi
 fi
 
+# Dual-mode arbitration must NOT erase content the EMF+ layer cannot reproduce
+# (raster images, text). These tracked dual files carry their picture in GDI
+# records whose EMF+ counterparts are unimplemented; -p must keep them.
+F=./emf/test-150.emf
+if [ -f "$F" ]; then
+    "$CONV" -p -i "$F" -o "$OUTDIR/t150-p.svg"
+    n=$(grep -oc '<image' "$OUTDIR/t150-p.svg")
+    if [ "$n" -ge 50 ]; then
+        ok "raster images preserved under -p on test-150 ($n images)"
+    else
+        ko "raster images lost under -p on test-150 ($n, expected >=50)"
+    fi
+fi
+F=./emf/test-155.emf
+if [ -f "$F" ]; then
+    "$CONV" -i "$F" -o "$OUTDIR/t155.svg"
+    "$CONV" -p -i "$F" -o "$OUTDIR/t155-p.svg"
+    np=$(wc -c < "$OUTDIR/t155.svg"); wp=$(wc -c < "$OUTDIR/t155-p.svg")
+    if [ "$wp" -ge $((np / 2)) ]; then
+        ok "image-only dual file not collapsed under -p on test-155 ($wp vs $np bytes)"
+    else
+        ko "image-only dual file collapsed under -p on test-155 ($wp vs $np bytes)"
+    fi
+fi
+
 # ---------------------------------------------------------------- no -p: unchanged
 F=./emf-ea/EA-test-file-020.emf
 "$CONV" -i "$F" -o "$OUTDIR/020-again.svg"
@@ -286,6 +311,20 @@ if [ -f "$F" ]; then
     else
         ko "no #a3a3a3 + fill-opacity pairing found on image4"
     fi
+    # Phase 5: the duplicate opaque GDI shadow squares must be suppressed
+    # (EMF+ active, outside a GetDC window) while the EMF+ soft shadows and the
+    # GetDC-played text survive.
+    if [ "$(grep -c 'fill:#a3a3a3"' "$OUTDIR/image4-p.svg")" -eq 0 ]; then
+        ok "opaque GDI fallback shadows suppressed on image4 (dark squares gone)"
+    else
+        ko "opaque GDI fallback shadows still present on image4"
+    fi
+    if grep -qE '<text|<!\[CDATA' "$OUTDIR/image4-p.svg"; then
+        ok "GetDC-played text preserved on image4"
+    else
+        ko "text lost on image4 (over-suppressed GDI)"
+    fi
+
     # The first EMF+ shadow rect (world UL{500,-406} WH{309,119} through
     # SetWorldTransform {1,0,0,-1,-196,-23}) must land exactly on the
     # GDI-fallback geometry: device rect [304,613]x[264,383].
