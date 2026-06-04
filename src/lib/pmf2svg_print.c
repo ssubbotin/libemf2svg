@@ -3300,7 +3300,7 @@ int U_PMR_FILLPIE_print(const char *contents, FILE *out,
   */
 int U_PMR_FILLPOLYGON_print(const char *contents, FILE *out,
                             drawingStates *states) {
-    FLAG_IGNORED;
+    FLAG_PARTIAL;
     int btype, ctype, RelAbs;
     uint32_t BrushID, Elements;
     U_PMF_POINTF *Points;

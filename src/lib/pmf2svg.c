@@ -2084,6 +2084,49 @@ int U_PMR_FILLPIE_draw(const char *contents, FILE *out, drawingStates *states) {
 int U_PMR_FILLPOLYGON_draw(const char *contents, FILE *out,
                            drawingStates *states) {
     int status = 1;
+    int btype, ctype, RelAbs, ok;
+    uint32_t i, BrushID, Elements, count, maxpts, psize;
+    U_PMF_POINTF *Points = NULL;
+    U_PMF_CMN_HDR hdr;
+    char fill[128];
+    if (states->inPath)
+        return (status);
+    if (pmf_record_unsafe(states, contents, &hdr))
+        return (status);
+    if (!U_PMR_FILLPOLYGON_get(contents, &hdr, &btype, &ctype, &RelAbs,
+                               &BrushID, &Elements, &Points))
+        return (status);
+    /* relative points are variable-length; not handled yet */
+    if (RelAbs) {
+        free(Points);
+        return (status);
+    }
+    /* U_PMF_VARPOINTS_get NULLs *Points on failure; bound the count by what the
+       record holds (points start at header 12 + BrushID 4 + Elements 4 = 20) */
+    if (Points != NULL) {
+        psize = ctype ? sizeof(U_PMF_POINT) : sizeof(U_PMF_POINTF);
+        maxpts = (hdr.Size > 20) ? (uint32_t)((hdr.Size - 20) / psize) : 0;
+        count = (Elements < maxpts) ? Elements : maxpts;
+        /* a polygon needs >= 3 points and all must be finite (a non-finite
+           coordinate would emit "nan", which DTD validation cannot catch);
+           validate before resolving the fill so no orphan <defs> is emitted */
+        ok = (count >= 3);
+        for (i = 0; ok && i < count; i++) {
+            POINT_D p = pmf_point_cal(states, Points[i].X, Points[i].Y);
+            if (!isfinite(p.x) || !isfinite(p.y))
+                ok = 0;
+        }
+        if (ok && pmf_resolve_fill(states, btype, BrushID, out, fill)) {
+            fprintf(out, "<!-- EMF+ FillPolygon --><%spath d=\"",
+                    states->nameSpaceString);
+            for (i = 0; i < count; i++) {
+                POINT_D p = pmf_point_cal(states, Points[i].X, Points[i].Y);
+                fprintf(out, "%c %.4f,%.4f ", i ? 'L' : 'M', p.x, p.y);
+            }
+            fprintf(out, "Z\" %s />\n", fill);
+        }
+    }
+    free(Points);
     return (status);
 }
 

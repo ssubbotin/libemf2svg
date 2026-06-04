@@ -161,6 +161,21 @@ if [ -f "$F" ]; then
         ok "drawpath output DTD-valid" || ko "drawpath output NOT DTD-valid"
 fi
 
+# FillPolygon: an inline-color polygon -> filled, closed SVG path.
+F=./emf-ea/EA-emfplus-fillpolygon.emf
+if [ -f "$F" ]; then
+    $VALGRIND "$CONV" -p -i "$F" -o "$OUTDIR/fillpoly.svg" || ko "conv -p failed on $F"
+    if grep -q 'EMF+ FillPolygon' "$OUTDIR/fillpoly.svg" &&
+        grep -q 'fill="#3366cc"' "$OUTDIR/fillpoly.svg" &&
+        grep -q 'L 50.0000,90.0000 Z' "$OUTDIR/fillpoly.svg"; then
+        ok "FillPolygon emitted as filled closed path on $F"
+    else
+        ko "FillPolygon not filled on $F"
+    fi
+    xmllint --dtdvalid "$DTD" --noout "$OUTDIR/fillpoly.svg" 2>/dev/null &&
+        ok "fillpolygon output DTD-valid" || ko "fillpolygon output NOT DTD-valid"
+fi
+
 # DrawRects: a rectangle stroked with a Pen -> stroked path, fill:none.
 F=./emf-ea/EA-emfplus-drawrects.emf
 if [ -f "$F" ]; then
@@ -189,6 +204,17 @@ if [ -f "$F" ]; then
     fi
     xmllint --dtdvalid "$DTD" --noout "$OUTDIR/drawlines.svg" 2>/dev/null &&
         ok "drawlines output DTD-valid" || ko "drawlines output NOT DTD-valid"
+fi
+
+# A FillPolygon with a non-finite point must be fully suppressed.
+F=./emf-corrupted/emfplus-fillpolygon-nan-point.emf
+if [ -f "$F" ]; then
+    $VALGRIND "$CONV" -p -i "$F" -o "$OUTDIR/fp-nan.svg" || ko "conv -p failed on $F"
+    if grep -qiE 'nan|inf' "$OUTDIR/fp-nan.svg"; then
+        ko "non-finite FillPolygon point leaked nan/inf into the SVG"
+    else
+        ok "non-finite FillPolygon point suppressed (no nan/inf)"
+    fi
 fi
 
 # A DrawLines polyline with a non-finite point must be fully suppressed.

@@ -29,6 +29,7 @@ PMR_OBJECT = 0x4008         # U_PMR_OBJECT | U_PMR_RECFLAG
 PMR_DRAWPATH = 0x4015       # U_PMR_DRAWPATH | U_PMR_RECFLAG
 PMR_DRAWRECTS = 0x400B      # U_PMR_DRAWRECTS | U_PMR_RECFLAG
 PMR_DRAWLINES = 0x400D      # U_PMR_DRAWLINES | U_PMR_RECFLAG
+PMR_FILLPOLYGON = 0x400C    # U_PMR_FILLPOLYGON | U_PMR_RECFLAG
 PPF_B, PPF_C, PPF_D = 0x8000, 0x4000, 0x0400  # inline ARGB, int16 coords, closed
 PPT_START, PPT_LINE = 0x00, 0x01
 OT_BRUSH, OT_PEN, OT_PATH = 0x01, 0x02, 0x03
@@ -122,6 +123,15 @@ def drawrects(pen_id, rects):
                        len(data)) + data
 
 
+def fillpolygon_inline(argb, points):
+    """FillPolygon with an inline ARGB color (btype=1), absolute float points."""
+    data = struct.pack("<I", argb) + struct.pack("<I", len(points))
+    for p in points:
+        data += struct.pack("<ff", *p)
+    return struct.pack("<HHII", PMR_FILLPOLYGON, PPF_B, 12 + len(data),
+                       len(data)) + data
+
+
 def drawlines(pen_id, points, closed=False):
     """DrawLines record: PenID in flags, absolute float points."""
     data = struct.pack("<I", len(points))
@@ -201,6 +211,15 @@ def main():
               eof(),
           ]))
 
+    # Phase 2: FillPolygon with an inline color -> filled, closed SVG path.
+    write(os.path.join(root, "emf-ea", "EA-emfplus-fillpolygon.emf"),
+          assemble([
+              emfplus_comment(
+                  fillpolygon_inline(0xFF3366CC,
+                                     [(10, 10), (100, 20), (50, 90)])),
+              eof(),
+          ]))
+
     # Phase 2 (strokes): DrawRects -> stroked rectangle outline.
     write(os.path.join(root, "emf-ea", "EA-emfplus-drawrects.emf"),
           assemble([
@@ -216,6 +235,15 @@ def main():
               emfplus_comment(
                   obj_record(0, OT_PEN, pen_solid((0x8C, 0x73, 0x69, 0xFF))) +
                   drawlines(0, [(10, 10), (100, 50), (50, 100)])),
+              eof(),
+          ]))
+
+    # Phase 2: a FillPolygon with a non-finite point must be suppressed.
+    write(os.path.join(root, "emf-corrupted", "emfplus-fillpolygon-nan-point.emf"),
+          assemble([
+              emfplus_comment(
+                  fillpolygon_inline(0xFF3366CC,
+                                     [(10, 10), (float("nan"), 20), (50, 90)])),
               eof(),
           ]))
 
